@@ -5,8 +5,8 @@ file to condition the video and carry that track into the MP4, or omit it to
 generate synchronized audio with LTX 2.5. No ComfyUI installation or server is
 required: this app bundles only the Python inference components it calls.
 
-This app is installed inside the `LTX25-Core-Studio` folder beside
-`installer.bat` and `run.bat`. Its two-stage image-to-video
+The Windows installer downloads this source into a `LTX25-Core-Studio` folder
+beside `installer.bat` and `run.bat`. Its two-stage image-to-video
 path follows the active part of the supplied `LTX2.5.json`: distilled INT8
 model, 8-step first pass, latent 2× upscale, and 3-step detail pass. The
 optional uploaded-audio path is an added feature, not present in that active
@@ -14,13 +14,17 @@ workflow branch.
 
 ## Install and run
 
-Keep the parent-folder `installer.bat` adjacent to the `LTX25-Core-Studio`
-folder. Double-click the installer. It creates a private `.venv`, installs
+Double-click the parent-folder `installer.bat`. It downloads the app from
+Codeberg, then GitHub if needed, then a Google Drive fallback when publicly
+available. You do not need to copy this repository beside the installer.
+It creates a private `.venv`, installs
 CUDA PyTorch and the other dependencies, and downloads the five required model
 files. You must first accept the [LTX 2.5 model access terms](https://huggingface.co/Lightricks/LTX-2.5).
 If asked to authenticate, run the indicated `hf auth login` command, then
 rerun the installer. Afterward, double-click the parent-folder `run.bat`
-or `LTX25-Core-Studio\run.bat`.
+or `LTX25-Core-Studio\run.bat`. To update, close the app and run the
+parent-folder `3-UPDATE-LTX25-Core-Studio.bat`. The updater keeps downloaded
+models, generated videos, and local network settings.
 
 The model weights are **not** bundled with the app source. The installer
 downloads them into `LTX25-Core-Studio\models`. Saved MP4 files and the

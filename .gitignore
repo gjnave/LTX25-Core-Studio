@@ -1,0 +1,7 @@
+.venv/
+models/
+outputs/
+__pycache__/
+*.pyc
+network_settings.json
+.gradio/

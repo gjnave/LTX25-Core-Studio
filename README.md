@@ -30,7 +30,12 @@ The model weights are **not** bundled with the app source. The installer
 downloads them into `LTX25-Core-Studio\models`. Saved MP4 files and the
 worker log go into `LTX25-Core-Studio\outputs`.
 
-The fast-preview switch skips the latent-upscale/detail pass and therefore
+The Create tab keeps the first-frame image, optional audio, Start/End trim times,
+Generate button, and video output in one short flow. The optional motion prompt,
+output size, clip length, seed, and high-detail pass are under Settings →
+Generation options. The audio preview appears only when requested.
+
+Turning off the high-detail pass skips the latent-upscale/detail pass and
 outputs at half the selected width and height. The two-stage mode outputs the
 full selected size. Frames use the LTX `8*k+1` rule at 24 fps. Uploaded audio
 is trimmed or padded to the selected duration. On a phone, use the Start/End
@@ -39,7 +44,7 @@ seconds or `mm:ss`; the Preview button plays the selected range. The prompt
 is optional: blank text lets the model infer motion from the first frame.
 
 Fast portrait is 512 × 768, matching Fast landscape's pixel count. The output
-video is separate from the collapsed Generation details (path, seed, and timing).
+video appears below Generate; saved-file and timing details are in Settings.
 
 The 15-, 20-, 30-, 45-, and 60-second choices are experimental single-pass runs. Long clips
 may run out of GPU or system memory, especially at larger sizes or with the

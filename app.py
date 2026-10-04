@@ -64,7 +64,7 @@ def preview_audio(path, start, end):
         )
     except Exception as error:
         raise gr.Error(str(error)) from error
-    return (sample_rate, samples), f"Previewing {first:.2f}–{last:.2f} seconds."
+    return gr.update(value=(sample_rate, samples), visible=True), f"Previewing {first:.2f}–{last:.2f} seconds."
 
 
 def duration_advice(duration):
@@ -168,7 +168,6 @@ body, .gradio-container { background: #071020 !important; color: #e9f1ff !import
 .ggf-title { color: #ffb536; font-size: 42px; font-weight: 800; margin: 5px 0; }
 .ggf-sub { color: #dce9ff; font-size: 16px; margin: 6px 0 16px; }
 .ggf-links a { color: #89caff !important; margin-right: 23px; font-weight: 650; }
-.ggf-card { border: 1px solid #314966 !important; border-radius: 12px !important; }
 #generate { background: #ffbb40 !important; color: #081321 !important; font-weight: 800 !important; }
 """
 
@@ -187,59 +186,55 @@ def build_demo():
           with gr.Tab("Create"):
             gr.Markdown("Use only images and audio you have the right and consent to edit.")
             with gr.Row():
-                with gr.Column(scale=1, elem_classes="ggf-card"):
-                    image = gr.Image(label="First frame · required", type="filepath", sources=["upload", "clipboard"])
+                with gr.Column(scale=1):
+                    image = gr.Image(label="First-frame image · required", type="filepath", sources=["upload", "clipboard"], height=320)
+                with gr.Column(scale=1):
                     audio = gr.Audio(label="Audio track · optional (leave blank for model-generated audio)", type="filepath", sources=["upload"], format="wav", editable=False)
                     audio_details = gr.Markdown(audio_description(None))
                     with gr.Row():
                         audio_start = gr.Textbox(label="Start time", value="0", placeholder="0 or 1:12.5")
                         audio_end = gr.Textbox(label="End time · blank = file end", value="", placeholder="e.g. 1:17.5")
-                    gr.Markdown("Enter seconds or `mm:ss`. Only the first selected clip-length seconds are used; shorter selections are padded with silence.")
                     with gr.Row():
                         preview_button = gr.Button("Preview selected audio")
                         audio_preview_note = gr.Markdown("")
-                    audio_preview = gr.Audio(label="Selected audio preview", interactive=False)
-                with gr.Column(scale=1, elem_classes="ggf-card"):
-                    output = gr.Video(label="Generated video", interactive=False)
-                    with gr.Accordion("Generation details", open=False):
-                        details = gr.Textbox(label="Saved file and timing", lines=3, interactive=False)
-            prompt = gr.Textbox(label="Motion and sound prompt · optional", lines=4,
-                            placeholder="Leave blank to let the model choose motion from your first frame, or describe exactly what you want...")
-            with gr.Row():
-                size = gr.Dropdown(label="Output size", choices=list(SIZES), value="Fast · 768 × 512")
-                duration = gr.Dropdown(label="Clip length", choices=list(DURATIONS), value="4 seconds · 97 frames")
-                seed = gr.Number(label="Seed (-1 = random)", value=-1, precision=0)
-            duration_note = gr.Markdown(
-                "**Long clips are experimental.** At 15–60 seconds, use a Fast size and turn off the "
-                "high-detail pass first. A 60-second portrait clip with detail enabled may exceed "
-                "available GPU or system memory."
-            )
-            detail_pass = gr.Checkbox(label="High-detail second pass (slower, full selected size)", value=True)
-            gr.Markdown("Uploaded audio is trimmed or padded to the selected clip length. Leave it blank to generate audio with the video. The first run loads the models; later runs reuse them.")
+                    audio_preview = gr.Audio(label="Selected audio preview", interactive=False, visible=False)
             generate_button = gr.Button("Generate video", variant="primary", elem_id="generate")
+            output = gr.Video(label="Output", interactive=False)
             audio.change(audio_description, inputs=audio, outputs=audio_details)
             preview_button.click(preview_audio, [audio, audio_start, audio_end], [audio_preview, audio_preview_note])
-            generate_button.click(generate, [image, audio, audio_start, audio_end, prompt, size, duration, detail_pass, seed], [output, details], concurrency_limit=1)
-            with gr.Accordion("Models and GPU memory", open=False):
+          with gr.Tab("Settings"):
+            with gr.Accordion("Generation options", open=True):
+                prompt = gr.Textbox(label="Motion and sound prompt · optional", lines=3,
+                                placeholder="Blank lets the model choose motion from the first frame.")
+                with gr.Row():
+                    size = gr.Dropdown(label="Output size", choices=list(SIZES), value="Fast · 768 × 512")
+                    duration = gr.Dropdown(label="Clip length", choices=list(DURATIONS), value="4 seconds · 97 frames")
+                    seed = gr.Number(label="Seed (-1 = random)", value=-1, precision=0)
+                detail_pass = gr.Checkbox(label="High-detail second pass (slower, full selected size)", value=True)
+                duration_note = gr.Markdown(duration_advice("4 seconds · 97 frames"))
+                duration.change(duration_advice, inputs=duration, outputs=duration_note)
+            with gr.Accordion("Generation details and GPU memory", open=False):
+                details = gr.Textbox(label="Last saved file and timing", lines=3, interactive=False)
                 status = gr.Textbox(label="Model status", value=model_status, lines=7, interactive=False)
                 with gr.Row():
                     gr.Button("Refresh model status").click(model_status, outputs=status)
                     gr.Button("Release models / free GPU memory").click(release_models, outputs=status)
+            with gr.Accordion("App updates", open=False):
+                update_result = gr.Markdown(f"Installed version: **{LOCAL_VERSION}**")
+                gr.Button("Check for updates").click(check_for_updates, outputs=update_result)
+            with gr.Accordion("Network access", open=False):
+                gr.Markdown("Saving a change requires a server restart. Anyone with the login can change these settings, so use a private password.")
+                current_network = gr.Markdown(active_network_status())
+                gr.Button("Refresh current address").click(active_network_status, outputs=current_network)
+                settings = read_settings()
+                network_mode = gr.Dropdown(label="Access mode", choices=[("This computer only", "local"), ("Local network (LAN)", "lan"), ("Temporary public link", "public")], value=settings["mode"])
+                network_user = gr.Textbox(label="Username for LAN or public access", value=settings["username"], max_lines=1)
+                network_password = gr.Textbox(label="Password (leave blank to keep existing password)", type="password", value="", max_lines=1)
+                gr.Markdown("LAN access listens on all network interfaces and may prompt for a Windows Firewall rule. Public access uses a temporary Gradio share link. Both require a username and a password of at least 12 characters. Passwords are stored locally as salted hashes, not included in the ZIP.")
+                network_saved = gr.Markdown("")
+                gr.Button("Save network settings").click(save_network_mode, [network_mode, network_user, network_password], [network_saved, network_password])
             gr.Markdown("LTX 2.5 model by Lightricks. Bundled inference components retain their upstream licenses; model weights download separately. Outputs are saved locally in `outputs`.")
-          with gr.Tab("Settings"):
-            gr.Markdown("### App updates")
-            update_result = gr.Markdown(f"Installed version: **{LOCAL_VERSION}**")
-            gr.Button("Check for updates").click(check_for_updates, outputs=update_result)
-            gr.Markdown("### Network access\nChoose how this app is reached. Saving requires a server restart. Anyone with the login can also change these settings, so use a private password.")
-            current_network = gr.Markdown(active_network_status())
-            gr.Button("Refresh current address").click(active_network_status, outputs=current_network)
-            settings = read_settings()
-            network_mode = gr.Dropdown(label="Access mode", choices=[("This computer only", "local"), ("Local network (LAN)", "lan"), ("Temporary public link", "public")], value=settings["mode"])
-            network_user = gr.Textbox(label="Username for LAN or public access", value=settings["username"], max_lines=1)
-            network_password = gr.Textbox(label="Password (leave blank to keep existing password)", type="password", value="", max_lines=1)
-            gr.Markdown("LAN access listens on all network interfaces and may prompt for a Windows Firewall rule. Public access uses a temporary Gradio share link. Both require a username and a password of at least 12 characters. Passwords are stored locally as salted hashes, not included in the ZIP.")
-            network_saved = gr.Markdown("")
-            gr.Button("Save network settings").click(save_network_mode, [network_mode, network_user, network_password], [network_saved, network_password])
+        generate_button.click(generate, [image, audio, audio_start, audio_end, prompt, size, duration, detail_pass, seed], [output, details], concurrency_limit=1)
         demo.load(active_network_status, outputs=current_network)
     return demo
 

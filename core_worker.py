@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import math
 import os
 import random
 import sys
@@ -29,10 +30,18 @@ NEGATIVE_PROMPT = "video game, cartoon, childish, ugly, distorted, low quality"
 
 
 def validate_request(request: dict) -> dict:
+    mode = str(request.get("mode") or "image_audio")
+    if mode not in {"image_audio", "text_video", "audio_video"}:
+        raise ValueError("Unknown generation mode.")
     prompt = str(request.get("prompt") or "").strip()
-    image_path = Path(str(request.get("image_path") or ""))
-    if not image_path.is_file():
+    image_value = str(request.get("image_path") or "").strip()
+    image_path = Path(image_value) if image_value else None
+    if mode == "image_audio" and (image_path is None or not image_path.is_file()):
         raise ValueError("Upload a first-frame image.")
+    if image_path is not None and not image_path.is_file():
+        raise ValueError("The first-frame image was not found.")
+    if mode in {"text_video", "audio_video"} and not prompt:
+        raise ValueError("Describe the video you want to create.")
     width = int(request.get("width", 1024))
     height = int(request.get("height", 576))
     frames = int(request.get("frames", 97))
@@ -41,8 +50,8 @@ def validate_request(request: dict) -> dict:
         raise ValueError("Width and height must be between 256 and 1536 pixels.")
     if width % 64 or height % 64:
         raise ValueError("Width and height must be divisible by 64 for the two-stage workflow.")
-    if frames < 9 or frames > 1441 or (frames - 1) % 8:
-        raise ValueError("Frames must be 8*k+1, between 9 and 1441 (one minute).")
+    if frames < 9 or (frames - 1) % 8:
+        raise ValueError("Frames must be 8*k+1, with at least 9 frames.")
     if fps != 24:
         raise ValueError("This workflow currently uses 24 fps.")
     seed = int(request.get("seed", -1))
@@ -53,15 +62,26 @@ def validate_request(request: dict) -> dict:
     audio_path = str(request.get("audio_path") or "").strip()
     if audio_path and not Path(audio_path).is_file():
         raise ValueError("Uploaded audio file was not found.")
+    if mode == "audio_video" and not audio_path:
+        raise ValueError("Upload an audio track.")
     audio_start = request.get("audio_start", "0")
     audio_end = request.get("audio_end", "")
     output_dir = Path(str(request.get("output_dir") or "")).resolve()
+    lora_name = str(request.get("lora_name") or "")
+    lora_strength = float(request.get("lora_strength", 1.0))
+    if not math.isfinite(lora_strength) or not -2 <= lora_strength <= 2:
+        raise ValueError("LoRA strength must be between -2 and 2.")
+    if lora_name and (Path(lora_name).name != lora_name or ":" in lora_name
+                      or Path(lora_name).suffix.lower() != ".safetensors"):
+        raise ValueError("Select a .safetensors LoRA from models/loras.")
     return {
-        "prompt": prompt, "image_path": str(image_path), "audio_path": audio_path,
+        "mode": mode, "prompt": prompt,
+        "image_path": str(image_path) if image_path else "", "audio_path": audio_path,
         "audio_start": audio_start, "audio_end": audio_end,
         "width": width, "height": height, "frames": frames, "fps": fps,
         "seed": seed, "detail_pass": bool(request.get("detail_pass", True)),
         "output_dir": output_dir,
+        "lora_name": lora_name, "lora_strength": lora_strength,
     }
 
 
@@ -125,7 +145,7 @@ class Engine:
         # SaveVideo normally receives prompt metadata from Comfy's graph runner.
         # This app calls it directly, so there is no graph metadata to attach.
         core_args.disable_metadata = True
-        for kind in ("diffusion_models", "text_encoders", "vae", "latent_upscale_models"):
+        for kind in ("diffusion_models", "text_encoders", "vae", "latent_upscale_models", "loras"):
             folder_paths.add_model_folder_path(kind, str(model_root / kind), is_default=True)
         self.torch = torch
         self.folder_paths = folder_paths
@@ -150,6 +170,8 @@ class Engine:
         self.SaveVideo = SaveVideo
         self.model_root = model_root
         self.model = self.clip = self.video_vae = self.audio_vae = self.upscaler = None
+        self.base_model = None
+        self.active_lora_key = None
         self.load_seconds = 0.0
         self.text_cache = {}
 
@@ -162,11 +184,35 @@ class Engine:
         started = time.perf_counter()
         event("Loading the app-local INT8 model and VAEs")
         self.model = self.nodes.UNETLoader().load_unet(DIFFUSION, "default")[0]
+        self.base_model = self.model
         self.clip = self.nodes.CLIPLoader().load_clip(TEXT_ENCODER, "ltxv", "default")[0]
         self.video_vae = self.nodes.VAELoader().load_vae(VIDEO_VAE)[0]
         self.audio_vae = self.nodes.VAELoader().load_vae(AUDIO_VAE)[0]
         self.upscaler = self.LatentUpscaleModelLoader.execute(SPATIAL_UPSCALER)[0]
         self.load_seconds = time.perf_counter() - started
+
+    def select_lora(self, cfg, event):
+        name, strength = cfg["lora_name"], cfg["lora_strength"]
+        if not name or strength == 0:
+            self.model = self.base_model
+            self.active_lora_key = None
+            return
+        root = (self.model_root / "loras").resolve()
+        path = (root / name).resolve()
+        if path.parent != root or not path.is_file():
+            raise ValueError("Selected LoRA was not found in models/loras. Refresh the LoRA list in Settings.")
+        key = (str(path), path.stat().st_mtime_ns, path.stat().st_size, strength)
+        if self.active_lora_key == key:
+            return
+        event(f"Loading LoRA: {name} (strength {strength:g})")
+        # Always patch the clean base; switching adapters never stacks old LoRAs.
+        self.model = self.base_model
+        self.active_lora_key = None
+        patched = self.nodes.LoraLoaderModelOnly().load_lora_model_only(self.base_model, name, strength)[0]
+        if sum(map(len, patched.patches.values())) <= sum(map(len, self.base_model.patches.values())):
+            raise ValueError("No compatible model weights matched this LoRA. Use an LTX 2.5-compatible model LoRA.")
+        self.model = patched
+        self.active_lora_key = key
 
     def text_conditioning(self, prompt: str, fps: int):
         key = (prompt, fps)
@@ -189,23 +235,28 @@ class Engine:
         cfg = validate_request(request)
         started = time.perf_counter()
         self.load_models(event)
-        image = load_image(cfg["image_path"])
+        self.select_lora(cfg, event)
+        image = load_image(cfg["image_path"]) if cfg["image_path"] else None
         source_audio = load_audio(
             cfg["audio_path"], cfg["frames"], cfg["fps"],
             cfg["audio_start"], cfg["audio_end"],
         ) if cfg["audio_path"] else None
         cfg["output_dir"].mkdir(parents=True, exist_ok=True)
         self.folder_paths.set_output_directory(str(cfg["output_dir"]))
-        with self.torch.inference_mode():
-            event("Encoding image and text")
+        # INT8 weight offloading re-wraps quantized tensors as Parameters.
+        # inference_mode makes those tensors incompatible with that operation.
+        # no_grad retains inference without creating inference-only tensors.
+        with self.torch.no_grad():
+            event("Encoding references and text" if image is not None else "Encoding text")
             positive, negative = self.text_conditioning(cfg["prompt"], cfg["fps"])
-            preprocessed = self.LTXVPreprocess.execute(image, 18)[0]
+            preprocessed = self.LTXVPreprocess.execute(image, 18)[0] if image is not None else None
             latent_video = self.EmptyLTXVLatentVideo.execute(
                 cfg["width"] // 2, cfg["height"] // 2, cfg["frames"], 1,
             )[0]
-            latent_video = self.LTXVImgToVideoInplace.execute(
-                self.video_vae, preprocessed, latent_video, 0.7, False,
-            )[0]
+            if preprocessed is not None:
+                latent_video = self.LTXVImgToVideoInplace.execute(
+                    self.video_vae, preprocessed, latent_video, 0.7, False,
+                )[0]
             empty_audio = self.LTXVEmptyLatentAudio.execute(
                 cfg["frames"], cfg["fps"], 1, self.audio_vae,
             )[0]
@@ -229,9 +280,10 @@ class Engine:
             if cfg["detail_pass"]:
                 event("Upscaling and refining — detail pass")
                 video_latent = self.LTXVLatentUpsampler.execute(video_latent, self.upscaler, self.video_vae)[0]
-                video_latent = self.LTXVImgToVideoInplace.execute(
-                    self.video_vae, preprocessed, video_latent, 1.0, False,
-                )[0]
+                if preprocessed is not None:
+                    video_latent = self.LTXVImgToVideoInplace.execute(
+                        self.video_vae, preprocessed, video_latent, 1.0, False,
+                    )[0]
                 av_latent = self.LTXVConcatAVLatent.execute(video_latent, audio_latent)[0]
                 sampled = self.sample(av_latent, positive, negative, DETAIL_PASS_SIGMAS, 42)
                 video_latent, audio_latent = self.LTXVSeparateAVLatent.execute(sampled)

@@ -1,0 +1,22 @@
+{
+  "mirrors": [
+    {
+      "name": "Codeberg",
+      "api": "https://codeberg.org/api/v1/repos/Cognibuild/LTX25-Core-Studio/branches/main",
+      "archive": "https://codeberg.org/Cognibuild/LTX25-Core-Studio/archive/{revision}.zip"
+    },
+    {
+      "name": "GitHub",
+      "api": "https://api.github.com/repos/gjnave/LTX25-Core-Studio/commits/main",
+      "archive": "https://github.com/gjnave/LTX25-Core-Studio/archive/{revision}.zip"
+    }
+  ],
+  "required": [
+    "app.py",
+    "core_worker.py",
+    "requirements.txt",
+    "update_app.py",
+    "release_sources.json",
+    "VERSION"
+  ]
+}

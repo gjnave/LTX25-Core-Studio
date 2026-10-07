@@ -41,7 +41,7 @@ class Worker:
             self.lines.put(line)
         self.lines.put("")
 
-    def _next(self, timeout: int) -> dict:
+    def _next(self, timeout: int | None) -> dict:
         try:
             line = self.lines.get(timeout=timeout)
         except queue.Empty as error:
@@ -83,7 +83,9 @@ class Worker:
                 self.process.stdin.write(json.dumps(payload) + "\n")
                 self.process.stdin.flush()
                 while True:
-                    answer = self._next(1800)
+                    # Long custom clips can take over 30 minutes in a single stage.
+                    # EOF still reports a crashed worker immediately.
+                    answer = self._next(None)
                     if "event" in answer:
                         if on_event:
                             on_event(str(answer["event"]))

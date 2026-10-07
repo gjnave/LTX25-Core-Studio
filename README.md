@@ -1,5 +1,10 @@
 # Get Going Fast · LTX 2.5 Core Studio
 
+Settings includes **Release models / free GPU memory** and **Stop server**.
+Release unloads the worker while keeping the app and phone connection open.
+The next generation reloads models automatically. Stop server asks for confirmation
+and requires restarting run.bat on the local PC. Finish active generation first.
+
 Local Gradio video generation with four simple creation modes: Lip Sync
 (image + audio), Text to Video, Image to Video, and Audio to Video. The audio
 mode keeps the uploaded track in the MP4; the text and image modes generate

@@ -14,9 +14,11 @@ import gradio as gr
 from audio_tools import audio_info, parse_time, read_selection
 from network_settings import read_settings, save_settings, verify_login, launch_access_servers, install_upload_disconnect_handling
 from runtime import MODEL_ROOT, OUTPUT_ROOT, WORKER, model_status
+from server_controls import ServerControls, add_server_controls, register_servers
 
 
 TITLE = "GGF Spokesman"
+SERVER_CONTROLS = ServerControls(lambda: [WORKER.lock], WORKER.stop)
 LOCAL_VERSION = (Path(__file__).with_name("VERSION")).read_text(encoding="utf-8").strip()
 VERSION_URLS = (
     "https://codeberg.org/Cognibuild/LTX25-Core-Studio/raw/branch/main/VERSION",
@@ -430,8 +432,7 @@ def build_demo(public_preview=False):
                 status = gr.Textbox(label="Model status", value=model_status, lines=7, interactive=False)
                 with gr.Row():
                     gr.Button("Refresh model status").click(model_status, outputs=status)
-                    if not public_preview:
-                        gr.Button("Release models / free GPU memory").click(release_models, outputs=status)
+            add_server_controls(SERVER_CONTROLS)
             with gr.Accordion("App updates", open=False):
                 update_result = gr.Markdown(f"Installed version: **{LOCAL_VERSION}**")
                 gr.Button("Check for updates").click(check_for_updates, outputs=update_result)
@@ -474,6 +475,7 @@ if __name__ == "__main__":
         allowed_paths=[str(OUTPUT_ROOT.resolve())],
     )
     ACTIVE_LOCAL_URL = local_url
+    register_servers(local_demo, remote_demo)
     ACTIVE_URL = remote_url or local_url
     print(f"{TITLE} running in {ACTIVE_MODE} mode at {ACTIVE_URL}", flush=True)
     timeout = int(os.environ.get("LTX_PUBLIC_MAX_SECONDS", "0")) if ACTIVE_MODE == "public" else 0

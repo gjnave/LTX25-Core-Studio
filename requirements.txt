@@ -26,3 +26,4 @@ comfy-aimdo==0.5.5
 blake3>=1,<2
 huggingface_hub[hf_xet]>=0.36,<2
 simpleeval>=1,<2
+imageio-ffmpeg>=0.6,<1

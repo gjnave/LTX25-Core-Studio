@@ -3,7 +3,7 @@ setlocal EnableExtensions
 cd /d "%~dp0"
 if exist "assets\about.nfo" type "assets\about.nfo"
 if not exist ".venv\Scripts\python.exe" (
-  echo Run ..\1-INSTALL-LTX25-Core-Studio.bat first.
+  echo Run installer.bat from your download or repository folder first.
   pause
   exit /b 1
 )

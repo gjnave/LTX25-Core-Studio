@@ -14,9 +14,11 @@
   "required": [
     "app.py",
     "core_worker.py",
+    "matte_tools.py",
     "requirements.txt",
     "update_app.py",
     "release_sources.json",
-    "VERSION"
+    "VERSION",
+    "vendor/comfy_core/comfy/ldm/models/autoencoder.py"
   ]
 }

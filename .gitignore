@@ -1,6 +1,6 @@
 .venv/
-models/
-outputs/
+/models/
+/outputs/
 __pycache__/
 *.pyc
 network_settings.json
@@ -8,3 +8,5 @@ network_settings.json
 .installed-revision.json
 app.lock
 logs/
+/installer-cache/
+/app-backups/

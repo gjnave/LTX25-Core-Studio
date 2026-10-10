@@ -29,6 +29,16 @@ DETAIL_PASS_SIGMAS = "0.85, 0.7250, 0.4219, 0.0"
 NEGATIVE_PROMPT = "video game, cartoon, childish, ugly, distorted, low quality"
 
 
+def safe_vae_output(torch, process_output):
+    """Core tiled decode returns inference tensors to an in-place normalization."""
+    def normalize(image):
+        if torch.is_inference(image):
+            with torch.inference_mode(False), torch.no_grad():
+                return process_output(image.clone())
+        return process_output(image)
+    return normalize
+
+
 def validate_request(request: dict) -> dict:
     mode = str(request.get("mode") or "image_audio")
     if mode not in {"image_audio", "text_video", "audio_video"}:
@@ -135,6 +145,7 @@ class Engine:
             EmptyLTXVLatentVideo, LTXVConcatAVLatent, LTXVConditioning,
             LTXVDualCFGGuider, LTXVImgToVideoInplace, LTXVPreprocess,
             LTXVSeparateAVLatent,
+            LTXVAddGuide, LTXVCropGuides,
         )
         from comfy_extras.nodes_lt_audio import LTXVAudioVAEDecode, LTXVEmptyLatentAudio, LTXVAudioVAEEncode
         from comfy_extras.nodes_lt_upsampler import LTXVLatentUpsampler
@@ -162,6 +173,8 @@ class Engine:
         self.LTXVImgToVideoInplace = LTXVImgToVideoInplace
         self.LTXVPreprocess = LTXVPreprocess
         self.LTXVSeparateAVLatent = LTXVSeparateAVLatent
+        self.LTXVAddGuide = LTXVAddGuide
+        self.LTXVCropGuides = LTXVCropGuides
         self.LTXVAudioVAEDecode = LTXVAudioVAEDecode
         self.LTXVEmptyLatentAudio = LTXVEmptyLatentAudio
         self.LTXVAudioVAEEncode = LTXVAudioVAEEncode
@@ -174,6 +187,8 @@ class Engine:
         self.active_lora_key = None
         self.load_seconds = 0.0
         self.text_cache = {}
+        self.alpha_model = None
+        self.alpha_model_key = None
 
     def load_models(self, event) -> None:
         if self.model is not None:
@@ -188,6 +203,8 @@ class Engine:
         self.clip = self.nodes.CLIPLoader().load_clip(TEXT_ENCODER, "ltxv", "default")[0]
         self.video_vae = self.nodes.VAELoader().load_vae(VIDEO_VAE)[0]
         self.audio_vae = self.nodes.VAELoader().load_vae(AUDIO_VAE)[0]
+        self.video_vae.process_output = safe_vae_output(self.torch,self.video_vae.process_output)
+        self.audio_vae.process_output = safe_vae_output(self.torch,self.audio_vae.process_output)
         self.upscaler = self.LatentUpscaleModelLoader.execute(SPATIAL_UPSCALER)[0]
         self.load_seconds = time.perf_counter() - started
 
@@ -232,6 +249,8 @@ class Engine:
         return self.SamplerCustomAdvanced.execute(noise, guider, sampler, schedule, latent)[0]
 
     def generate(self, request: dict, event) -> dict:
+        if request.get("mode") == "alpha_matte":
+            return self.generate_matte(request, event)
         cfg = validate_request(request)
         started = time.perf_counter()
         self.load_models(event)
@@ -307,6 +326,86 @@ class Engine:
             "load_seconds": round(self.load_seconds, 2),
             "total_seconds": round(time.perf_counter() - started, 2),
         }
+
+    def generate_matte(self, request: dict, event) -> dict:
+        from matte_tools import (
+            ALPHA_FILE, adapter_ready, prepare_video, video_chunks,
+            padded_frames, MatteExports,
+        )
+        import uuid
+        started = time.perf_counter()
+        source = str(request.get('video_path') or '')
+        if not source or not Path(source).is_file():
+            raise ValueError('Upload a video and wait for its preview first.')
+        if not adapter_ready(self.model_root):
+            raise ValueError('Download the optional Background Removal adapter in its tab first.')
+        start, duration = float(request.get('start',0)), float(request.get('duration',0))
+        short_edge = int(request.get('short_edge',384))
+        if short_edge not in {0,384,512,768}:
+            raise ValueError('Select a Background Removal size from its menu.')
+        seed = int(request.get('seed',-1))
+        if seed < 0:
+            seed = random.randrange(2**63)
+        if seed >= 2**63:
+            raise ValueError('Seed is too large.')
+        output_root = Path(request['output_dir']).resolve()
+        output_root.mkdir(parents=True,exist_ok=True)
+        prefix = f'GGF-Spokesman-matte-{int(time.time())}-{uuid.uuid4().hex[:10]}'
+        work = output_root/'matte-work'/prefix
+        work.mkdir(parents=True)
+        event('Preparing your video for background removal')
+        meta = prepare_video(source,work/'source.mkv',short_edge,start,duration)
+        self.load_models(event)
+        previous_model, previous_key = self.model, self.active_lora_key
+        exporter = None
+        try:
+            path = self.model_root/'loras'/ALPHA_FILE
+            alpha_key = (str(path),path.stat().st_mtime_ns,path.stat().st_size,1.0)
+            if self.alpha_model_key != alpha_key:
+                self.select_lora({'lora_name':ALPHA_FILE,'lora_strength':1.0},event)
+                self.alpha_model, self.alpha_model_key = self.model, alpha_key
+            else:
+                self.model, self.active_lora_key = self.alpha_model, alpha_key
+            with self.torch.no_grad():
+                # Alpha Gen requires empty text, full-resolution guidance, and one stage.
+                empty = self.nodes.CLIPTextEncode().encode(self.clip,'')[0]
+                base_positive, base_negative = self.LTXVConditioning.execute(empty,empty,float(meta['fps']))
+                exporter = MatteExports(work,output_root,prefix,meta,
+                                        request.get('background_path'),bool(request.get('transparent',True)))
+                for index, rgb in enumerate(video_chunks(work/'source.mkv')):
+                    count = len(rgb)
+                    frames = padded_frames(rgb)
+                    length = len(frames)
+                    event(f'Generating background mask · section {index+1} · {count} frames')
+                    reference = self.torch.from_numpy(frames.copy()).float().div_(255)
+                    latent = self.EmptyLTXVLatentVideo.execute(meta['width'],meta['height'],length,1)[0]
+                    positive, negative, latent = self.LTXVAddGuide.execute(
+                        base_positive,base_negative,self.video_vae,latent,reference,0,1.0,
+                        iclora_parameters={'reference_downscale_factor':1})
+                    audio = self.LTXVEmptyLatentAudio.execute(length,float(meta['fps']),1,self.audio_vae)[0]
+                    av_latent = self.LTXVConcatAVLatent.execute(latent,audio)[0]
+                    sampled = self.sample(av_latent,positive,negative,FIRST_PASS_SIGMAS,seed)
+                    video_latent, _ = self.LTXVSeparateAVLatent.execute(sampled)
+                    _, _, video_latent = self.LTXVCropGuides.execute(positive,negative,video_latent)
+                    event(f'Decoding background mask · section {index+1}')
+                    pixels = self.nodes.VAEDecodeTiled().decode(
+                        self.video_vae,video_latent,tile_size=512,overlap=64,
+                        temporal_size=64,temporal_overlap=8)[0]
+                    if pixels.ndim == 5:
+                        pixels = pixels[0]
+                    if len(pixels) < count:
+                        raise RuntimeError('The matte has fewer frames than the source section.')
+                    exporter.write(rgb,pixels[:count].float().cpu().numpy())
+                    del reference, latent, audio, av_latent, sampled, video_latent, pixels, positive, negative
+                event('Saving your preview and background-removal downloads')
+                result = exporter.finish(source,start)
+                exporter = None
+            return {**result,'total_seconds':round(time.perf_counter()-started,2),'seed':seed}
+        finally:
+            # Restore the exact previous adapter/base; keep Alpha Gen cached for reuse.
+            self.model, self.active_lora_key = previous_model, previous_key
+            if exporter is not None:
+                exporter.close(abort=True)
 
 
 def main() -> int:

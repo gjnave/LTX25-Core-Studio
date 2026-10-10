@@ -1,4 +1,4 @@
-# Get Going Fast · LTX 2.5 Core Studio
+# GGF Spokesman · talking avatars powered by LTX 2.5
 
 Settings includes **Release models / free GPU memory** and **Stop server**.
 Release unloads the worker while keeping the app and phone connection open.
@@ -21,7 +21,12 @@ workflow branch.
 
 ## Install and run
 
-Double-click the parent-folder `installer.bat`. The complete ZIP uses its
+Double-click `installer.bat` in the extracted download. A repository clone also
+includes `installer.bat` and installs directly into that checkout. Portable uv
+and managed Windows 64-bit Python 3.10 are downloaded automatically; no system
+Python or uv installation is required. Existing compatible 3.10/3.11 app
+environments are preserved. Use a current NVIDIA driver supporting CUDA 13.0.
+The complete ZIP uses its
 bundled app files; an installer-only copy downloads source from Codeberg,
 then GitHub if needed, then a Google Drive fallback when publicly available.
 You do not need to copy this repository beside the installer.
@@ -41,13 +46,13 @@ worker log go into `LTX25-Core-Studio\outputs`.
 The Lip Sync tab preserves the original first-frame image, optional audio,
 Start/End trim times, Generate button, and video output in one short flow. Its
 optional motion prompt, output size, clip length, seed, and high-detail pass
-remain under Settings → Lip Sync options. The audio preview appears only
+appear in the Lip Sync tab's Motion and quality section. The audio preview appears only
 when requested.
 
 Text to Video needs only a scene description. Image to Video needs a starting
 image and can use an optional motion description. Audio to Video needs an audio
 file plus a visual description; its original audio is retained. These three
-tabs show only short 2–10 second lengths to make first runs predictable.
+tabs default to four seconds and offer longer presets and custom durations.
 Their optional quality/seed controls are collapsed by default. The full-size
 detail pass is on by default; turn it off for a quicker, half-size preview.
 
@@ -63,10 +68,32 @@ Fast portrait is 512 × 768, matching Fast landscape's pixel count. Each output
 video appears directly below its Generate button; saved-file and timing details
 are in Settings.
 
-First/Last Frame and Alpha Gen matte are not included yet. The former needs a
-separately validated two-frame conditioning path; the latter needs an optional
-IC-LoRA plus video-guidance code. Neither is a reason to download more models
-or add nonworking controls to the starter app.
+## Background Removal (optional)
+
+The Background Removal tab accepts an uploaded video or a result sent from any
+creation tab. Download its optional Alpha Gen adapter (about 1.3 GB) in that tab;
+it reuses the installed distilled INT8 LTX model and VAEs. Accept access at
+https://huggingface.co/Lightricks/LTX-2.5-22b-IC-LoRA-Alpha-Gen first. If needed,
+enter a Hugging Face read token from that account; this app does not save it.
+Click **Check access** after accepting the terms. The app checks permission to
+the actual gated weight file without downloading it and enables Download only
+after Hugging Face confirms access. A login saved on this PC can be reused by
+leaving the token blank. Browser/phone login alone does not authenticate the PC
+app. Fine-grained tokens must allow reading this gated model. Pending approval,
+invalid tokens, and connection errors show different retry instructions.
+
+No prompt is required. The model chooses the foreground automatically. An
+optional background image replaces the background; otherwise the preview uses
+a checkerboard. Downloads include a grayscale mask MP4 and optional transparent
+WebM. The preview and transparent video retain source audio. Files have unique
+names and save in `outputs`. Processing keeps the source shape and frame rate,
+pads to the 32-pixel grid, and removes the padding from exports. Videos longer
+than 145 frames are split into sections automatically; review the joins.
+
+The same persistent worker caches both the clean base and the Alpha Gen patch.
+Its previous LoRA selection is restored after matting. Release models, server
+restart, or a memory failure require loading models again. Comfy can still move
+weights between RAM and VRAM as needed. First/Last Frame is not included.
 
 The 15-, 20-, 30-, 45-, and 60-second choices are experimental single-pass runs. Long clips
 may run out of GPU or system memory, especially at larger sizes or with the

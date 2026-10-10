@@ -14,6 +14,7 @@ import gradio as gr
 from audio_tools import audio_info, parse_time, read_selection
 from network_settings import read_settings, save_settings, verify_login, launch_access_servers, install_upload_disconnect_handling
 from runtime import MODEL_ROOT, OUTPUT_ROOT, WORKER, model_status
+from matte_tools import ALPHA_REPO, adapter_ready, adapter_status, check_adapter_access, download_adapter
 from server_controls import ServerControls, add_server_controls, register_servers
 
 
@@ -245,6 +246,64 @@ def generate_image_only(image, prompt, size, duration, detail_pass, seed,
                               size, duration, detail_pass, seed, progress, lora_name, lora_strength)
 
 
+def send_to_background(video):
+    if isinstance(video, (tuple,list)):
+        video = video[0]
+    if not video or not Path(video).is_file():
+        raise gr.Error('Generate a video first, then send it to Background Removal.')
+    return video, gr.update(selected='background-removal')
+
+
+def download_background_adapter(token):
+    yield 'Checking access and downloading the optional adapter… partial downloads resume automatically.', '',gr.update(interactive=False)
+    try:
+        message = download_adapter(MODEL_ROOT,token)
+    except Exception as error:
+        yield str(error),'',gr.update(interactive=False)
+        return
+    yield message, '',gr.update(interactive=False)
+
+
+def check_background_access(token):
+    if adapter_ready(MODEL_ROOT):
+        return 'Background Removal adapter already installed. No login is needed to use it.',gr.update(interactive=False)
+    access=check_adapter_access(token)
+    return access['message'],gr.update(interactive=access['allowed'])
+
+
+def refresh_background_status():
+    return adapter_status(MODEL_ROOT),gr.update(interactive=False)
+
+
+def background_login_changed():
+    return 'Click Check access to verify this account before downloading.',gr.update(interactive=False)
+
+
+def generate_background(video, background, size, start, duration, seed, transparent, progress=gr.Progress()):
+    if not video or not Path(video).is_file():
+        raise gr.Error('Upload a video and wait for its preview first.')
+    if not adapter_ready(MODEL_ROOT):
+        raise gr.Error('Download the optional adapter in this tab first.')
+    yield None,gr.update(value=None,visible=False),gr.update(value=None,visible=False),'Starting background removal…'
+    def on_event(message):
+        try:
+            progress(0,desc=message)
+        except Exception:
+            pass
+    try:
+        result = WORKER.request({
+            'mode':'alpha_matte','video_path':video,'background_path':background,
+            'short_edge':int(size),'start':float(start),'duration':float(duration),
+            'seed':int(seed),'transparent':bool(transparent),'output_dir':str(OUTPUT_ROOT),
+        },on_event)
+    except Exception as error:
+        raise gr.Error(str(error)) from None
+    message = (f"Saved to outputs · {result['width']} × {result['height']} · "
+               f"{result['frames']} frames · {result['total_seconds']:.1f} s. "
+               'Original audio retained. Checkerboard indicates transparency when no background image is supplied.')
+    yield result['preview'],gr.update(value=result.get('transparent'),visible=bool(result.get('transparent'))),gr.update(value=result['mask'],visible=True),message
+
+
 def release_models():
     WORKER.stop()
     return "Models released from GPU memory. Saved videos remain on disk."
@@ -297,7 +356,7 @@ body, .gradio-container { background: #071020 !important; color: #e9f1ff !import
 .ggf-sub { color: #dce9ff; font-size: 16px; margin: 6px 0 16px; }
 .ggf-links a { color: #89caff !important; margin-right: 23px; font-weight: 650; }
 .ggf-powered, .ggf-powered p { color: #9fb1cb !important; font-size: 12px; }
-#generate { background: #ffbb40 !important; color: #081321 !important; font-weight: 800 !important; }
+#generate, #generate-matte { background: #ffbb40 !important; color: #081321 !important; font-weight: 800 !important; }
 #studio-tabs [role="tablist"] { gap: 6px; padding: 8px 0 12px; border-color: #37516e; }
 #studio-tabs button[role="tab"] {
   color: #e9f1ff !important; background: #172842 !important;
@@ -339,7 +398,7 @@ def build_demo(public_preview=False):
         </div>""")
         if public_preview:
             gr.Markdown("**Temporary public preview:** no login is required. Do not upload private media to this shared test link.")
-        with gr.Tabs(selected="lip-sync", elem_id="studio-tabs"):
+        with gr.Tabs(selected="lip-sync", elem_id="studio-tabs") as tabs:
           with gr.Tab("Lip Sync", id="lip-sync", elem_id="tab-lip-sync"):
             gr.Markdown("### Lip Sync\nAnimate a person or character using a reference image and speech or music. Use only media you have the right and consent to edit.", elem_classes="ggf-intro")
             with gr.Row():
@@ -367,6 +426,7 @@ def build_demo(public_preview=False):
             duration.change(duration_advice, inputs=duration, outputs=duration_note)
             generate_button = gr.Button("Generate lip-sync video", variant="primary", elem_id="generate")
             output = gr.Video(label="Output", interactive=False)
+            send_lip = gr.Button('Send to Background Removal', variant='secondary')
             audio.change(audio_description, inputs=audio, outputs=audio_details)
             preview_button.click(preview_audio, [audio, audio_start, audio_end], [audio_preview, audio_preview_note])
           with gr.Tab("Audio to Video", id="audio-video", elem_id="tab-audio-video"):
@@ -389,6 +449,7 @@ def build_demo(public_preview=False):
                 audio_only_seed = gr.Number(label="Seed (-1 = random)", value=-1, precision=0)
             audio_only_generate = gr.Button("Create video from audio", variant="primary", elem_id="generate-audio")
             audio_only_output = gr.Video(label="Your video", interactive=False)
+            send_audio = gr.Button('Send to Background Removal', variant='secondary')
             audio_only_preview_button.click(preview_audio, [audio_only, audio_only_start, audio_only_end],
                                             [audio_only_preview, audio_only_preview_note])
           with gr.Tab("Text to Video", id="text-video", elem_id="tab-text-video"):
@@ -403,6 +464,7 @@ def build_demo(public_preview=False):
                 text_seed = gr.Number(label="Seed (-1 = random)", value=-1, precision=0)
             text_generate = gr.Button("Create video", variant="primary", elem_id="generate-text")
             text_output = gr.Video(label="Your video", interactive=False)
+            send_text = gr.Button('Send to Background Removal', variant='secondary')
           with gr.Tab("Image to Video", id="image-video", elem_id="tab-image-video"):
             gr.Markdown("### Image to Video\nUpload a still image and describe how it should move. Sound is generated automatically.", elem_classes="ggf-intro")
             image_only = gr.Image(label="Starting image", type="filepath", sources=["upload", "clipboard"], height=320)
@@ -416,10 +478,41 @@ def build_demo(public_preview=False):
                 image_seed = gr.Number(label="Seed (-1 = random)", value=-1, precision=0)
             image_generate = gr.Button("Animate image", variant="primary", elem_id="generate-image")
             image_output = gr.Video(label="Your video", interactive=False)
+            send_image = gr.Button('Send to Background Removal', variant='secondary')
+          with gr.Tab('Background Removal', id='background-removal', elem_id='tab-background-removal'):
+            gr.Markdown('### Background Removal\nUpload a video or send one from another tab. The model automatically isolates the foreground; no prompt or painted mask is needed.',elem_classes='ggf-intro')
+            with gr.Accordion('Optional adapter download · 1.3 GB',open=not adapter_ready(MODEL_ROOT)):
+                matte_install_status = gr.Markdown(adapter_status(MODEL_ROOT))
+                gr.Markdown(f'**One-time access setup**\n\n'
+                            f'1. [Open the Alpha Gen model page](https://huggingface.co/{ALPHA_REPO}), sign in, and choose **Agree and access** or request access.\n'
+                            '2. [Create a read token](https://huggingface.co/settings/tokens) using **the same account**. Paste it below, or leave blank to use a Hugging Face login already saved on this PC.\n'
+                            '3. Click **Check access**. Download becomes available after Hugging Face confirms permission. If approval is pending, check again once approved.\n\n'
+                            'Signing in through your phone/browser alone does not sign this PC app in. The adapter reuses your existing LTX models.')
+                matte_token = gr.Textbox(label='Hugging Face read token · blank uses this PC’s saved login',type='password',value='',info='The app does not save this token. Fine-grained tokens must allow reading this gated model.')
+                matte_check_access = gr.Button('Check access',variant='secondary')
+                matte_download = gr.Button('Download Background Removal adapter',variant='secondary',interactive=False)
+                matte_refresh = gr.Button('Refresh adapter status',variant='secondary')
+            with gr.Row():
+                matte_video = gr.Video(label='Your video',sources=['upload'],height=320)
+                matte_background = gr.Image(label='New background · optional',type='filepath',sources=['upload','clipboard'],height=320)
+            matte_size = gr.Dropdown(label='Processing size · keeps the video shape',choices=[('Fast · 384 short edge',384),('Balanced · 512 short edge',512),('Larger · 768 short edge',768),('Original size',0)],value=384)
+            with gr.Accordion('Clip range and downloads (optional)',open=False):
+                with gr.Row():
+                    matte_start = gr.Number(label='Start (seconds)',value=0,minimum=0)
+                    matte_duration = gr.Number(label='Duration (seconds) · 0 = to end',value=0,minimum=0)
+                matte_seed = gr.Number(label='Seed (-1 = random)',value=-1,precision=0)
+                matte_transparent = gr.Checkbox(label='Also save transparent WebM video',value=True)
+            gr.Markdown('Longer clips are processed in short sections. Fast size is recommended for a first try. Section joins may need review.')
+            matte_generate = gr.Button('Remove background',variant='primary',elem_id='generate-matte')
+            matte_output = gr.Video(label='Preview · original audio retained',interactive=False,height=360)
+            with gr.Row():
+                matte_webm = gr.DownloadButton('Download transparent video',visible=False)
+                matte_mask = gr.DownloadButton('Download mask video',visible=False)
+            matte_result = gr.Markdown('Upload a video or send over a generated result.')
           with gr.Tab("Settings", id="settings", elem_id="tab-settings"):
             gr.Markdown("### Settings\nOptional LoRA, app updates, network access, and GPU status.", elem_classes="ggf-intro")
-            with gr.Accordion("LoRA (optional · all video tabs)", open=True):
-                gr.Markdown("Use an **LTX 2.5-compatible model LoRA**. Off keeps the original model unchanged. Your selection applies to every video tab in this browser session. Add the LoRA's trigger words to your prompt if required; other model families are not supported.")
+            with gr.Accordion("LoRA (optional · creation tabs)", open=True):
+                gr.Markdown("Use an **LTX 2.5-compatible model LoRA**. Off keeps the original model unchanged. Your selection applies to the four creation tabs. Background Removal uses its own adapter and restores your selection afterward. Add the LoRA's trigger words to your prompt if required; other model families are not supported.")
                 lora_name = gr.Dropdown(label="LoRA", choices=lora_choices(), value="")
                 lora_strength = gr.Slider(label="LoRA strength · 0 disables it", minimum=-2, maximum=2, value=1.0, step=0.05)
                 gr.Button("Refresh LoRA list").click(refresh_loras, lora_name, lora_name)
@@ -456,6 +549,14 @@ def build_demo(public_preview=False):
         audio_only_generate.click(generate_audio_only,
             [audio_only, audio_only_start, audio_only_end, audio_only_prompt, audio_only_size,
              audio_only_duration, audio_only_detail, audio_only_seed, lora_name, lora_strength], [audio_only_output, details], concurrency_limit=1)
+        for button,source in [(send_lip,output),(send_audio,audio_only_output),(send_text,text_output),(send_image,image_output)]:
+            button.click(send_to_background,source,[matte_video,tabs],queue=False)
+        matte_check_access.click(check_background_access,matte_token,[matte_install_status,matte_download],concurrency_limit=1)
+        matte_token.input(background_login_changed,outputs=[matte_install_status,matte_download],queue=False)
+        matte_download.click(download_background_adapter,matte_token,[matte_install_status,matte_token,matte_download],concurrency_limit=1)
+        matte_refresh.click(refresh_background_status,outputs=[matte_install_status,matte_download],queue=False)
+        matte_generate.click(generate_background,[matte_video,matte_background,matte_size,matte_start,matte_duration,matte_seed,matte_transparent],
+                             [matte_output,matte_webm,matte_mask,matte_result],concurrency_limit=1)
         if not public_preview:
             demo.load(active_network_status, outputs=current_network)
     return demo

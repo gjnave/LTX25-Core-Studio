@@ -4,5 +4,5 @@
 - Never delete a file or folder without the user's explicit permission.
 - Publish individual source files to Codeberg Cognibuild/LTX25-Core-Studio and GitHub gjnave/LTX25-Core-Studio. Updates download host-generated repository archives like original Headliner. Never require a manually rebuilt source ZIP or manifest. Drive is optional backup storage. Verify both repository revisions after pushing.
 - Do not upload model weights, outputs, credentials, `.venv`, or `network_settings.json`.
-- The root `installer.bat` is the single Windows CMD installer, including model downloads. `3-UPDATE-LTX25-Core-Studio.bat` uses update_app.py when available, with installer update mode for older installations.
+- The customer `installer.bat` and `3-UPDATE-LTX25-Core-Studio.bat` belong in the separate member download, not this public source repository. Keep numbered manual installation steps in `README.md`; `run.bat` may remain here. The customer CMD installer includes model downloads, and its updater uses `update_app.py` when available.
 - See `RELEASE-MIRRORS.md` for endpoints and verification steps. Do not assume a local commit has reached any mirror.

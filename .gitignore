@@ -10,3 +10,4 @@ app.lock
 logs/
 /installer-cache/
 /app-backups/
+/installer.bat

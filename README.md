@@ -1,4 +1,12 @@
-# GGF Spokesman · talking avatars powered by LTX 2.5
+![LTX Spokesman — Give your avatar a voice](spokesman.png)
+
+# LTX Spokesman — talking avatars powered by LTX 2.5
+
+## A Get Going Fast Application
+
+### [Quick Setup Helper → GetGoingFast.pro/tools/spokesman](https://getgoingfast.pro/tools/spokesman/)
+
+The guided Windows setup is a separate Get Going Fast member download. This public repository contains the app source and manual setup instructions, not a quick installer or model weights.
 
 Settings includes **Release models / free GPU memory** and **Stop server**.
 Release unloads the worker while keeping the app and phone connection open.
@@ -12,32 +20,42 @@ synchronized audio with LTX 2.5. All four modes use the same five model files.
 No ComfyUI installation or server is required: this app bundles only the
 Python inference components it calls.
 
-The Windows installer downloads this source into a `LTX25-Core-Studio` folder
-beside `installer.bat` and `run.bat`. Its two-stage image-to-video
-path follows the active part of the supplied `LTX2.5.json`: distilled INT8
+The two-stage image-to-video path follows the active part of the supplied `LTX2.5.json`: distilled INT8
 model, 8-step first pass, latent 2× upscale, and 3-step detail pass. The
 optional uploaded-audio path is an added feature, not present in that active
 workflow branch.
 
-## Install and run
+## Manual installation from source
 
-Double-click `installer.bat` in the extracted download. A repository clone also
-includes `installer.bat` and installs directly into that checkout. Portable uv
-and managed Windows 64-bit Python 3.10 are downloaded automatically; no system
-Python or uv installation is required. Existing compatible 3.10/3.11 app
-environments are preserved. Use a current NVIDIA driver supporting CUDA 13.0.
-The complete ZIP uses its
-bundled app files; an installer-only copy downloads source from Codeberg,
-then GitHub if needed, then a Google Drive fallback when publicly available.
-You do not need to copy this repository beside the installer.
-It creates a private `.venv`, installs
-CUDA PyTorch and the other dependencies, and downloads the five required model
-files. You must first accept the [LTX 2.5 model access terms](https://huggingface.co/Lightricks/LTX-2.5).
-If asked to authenticate, run the indicated `hf auth login` command, then
-rerun the installer. Afterward, double-click the parent-folder `run.bat`
-or `LTX25-Core-Studio\run.bat`. To update, close the app and run the
-parent-folder `3-UPDATE-LTX25-Core-Studio.bat`. The updater keeps downloaded
-models, generated videos, and local network settings.
+Use Windows 64-bit, a current NVIDIA driver supporting CUDA 13, [Git for Windows](https://git-scm.com/download/win), and [uv](https://docs.astral.sh/uv/getting-started/installation/). Open **Command Prompt**:
+
+1. Clone this repository and create its private Python 3.10 environment:
+
+   ```bat
+   git clone https://codeberg.org/Cognibuild/LTX25-Core-Studio.git
+   cd LTX25-Core-Studio
+   uv venv --managed-python --python 3.10 .venv
+   ```
+
+2. Install CUDA PyTorch and the app requirements:
+
+   ```bat
+   uv pip install --python .venv\Scripts\python.exe torch==2.10.0+cu130 torchvision==0.25.0+cu130 torchaudio==2.10.0+cu130 --index-url https://download.pytorch.org/whl/cu130 --extra-index-url https://pypi.org/simple --index-strategy unsafe-best-match
+   uv pip install --python .venv\Scripts\python.exe -r requirements.txt
+   uv pip check --python .venv\Scripts\python.exe
+   ```
+
+3. Accept the [LTX 2.5 model terms](https://huggingface.co/Lightricks/LTX-2.5). If the PC is not signed into Hugging Face, run `.venv\Scripts\hf.exe auth login`. Download the five required files directly from Lightricks:
+
+   ```bat
+   .venv\Scripts\hf.exe download Lightricks/LTX-2.5 diffusion_models/ltx-2.5-22b-distilled-transformer-comfy-int8-convrot.safetensors --local-dir models
+   .venv\Scripts\hf.exe download Lightricks/LTX-2.5 text_encoders/gemma4-12b-with-proj-ltx-2.5-comfy-int8-convrot.safetensors --local-dir models
+   .venv\Scripts\hf.exe download Lightricks/LTX-2.5 vae/ltx-2.5-video-vae-bf16.safetensors --local-dir models
+   .venv\Scripts\hf.exe download Lightricks/LTX-2.5 vae/ltx-2.5-audio-vae-bf16.safetensors --local-dir models
+   .venv\Scripts\hf.exe download Lightricks/LTX-2.5 latent_upscale_models/ltx-2.5-latent-spatial-upscaler-x2-bf16-1.0.safetensors --local-dir models
+   ```
+
+4. Run `.venv\Scripts\python.exe -c "from model_config import missing_files; from pathlib import Path; assert not missing_files(Path('models'))"`, then double-click `run.bat` or run `.venv\Scripts\python.exe app.py`. The separate member installer automates these steps; its BAT file is not published in this source repository.
 
 The model weights are **not** bundled with the app source. The installer
 downloads them into `LTX25-Core-Studio\models`. Saved MP4 files and the
